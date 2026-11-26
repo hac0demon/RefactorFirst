@@ -177,7 +177,6 @@ Specify with -D if running on the command line.  e.g. ```-DbackEdgeAnalysisCount
 
 The Java 25 parser activates automatically when running on a JDK 25+ runtime (JEP 238 multi-release jar); there is no configuration flag for it.
 
-
 ## But I'm using Gradle / my project layout isn't typical!
 I plan to create a Gradle plugin and (possibly) support non-conventional project structures in the future, but in the meantime you can create a dummy POM file in the same directory as your .git directory to show your project's name in the report:
 
@@ -195,6 +194,27 @@ and then (assuming Maven is installed) run
 
 ```bash
 mvn org.hjug.refactorfirst.plugin:refactor-first-maven-plugin:0.10.0:htmlReport
+```
+
+## Using Bazel
+A Bazel plugin is available to run RefactorFirst on your Java codebases built with Bazel.
+See the [refactor-first-bazel-plugin](refactor-first-bazel-plugin/README.md) directory for details on how to integrate the plugin using `WORKSPACE` or Bzlmod.
+
+Quick example:
+1. Define the runner target in your `BUILD` file:
+```starlark
+load("@refactor_first_bazel_plugin//refactor-first-bazel-plugin:defs.bzl", "refactor_first_runner")
+
+refactor_first_runner(
+    name = "refactor_run",
+    cli_jar = "@refactor_first_cli//jar",
+    project_name = "my-project",
+    project_version = "1.0.0",
+)
+```
+2. Run the analysis locally:
+```bash
+bazel run //:refactor_run
 ```
 
 ### Seeing Errors?

@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,7 @@ import org.openrewrite.ExecutionContext;
 import org.openrewrite.InMemoryExecutionContext;
 import org.openrewrite.SourceFile;
 import org.openrewrite.java.JavaParser;
+import org.openrewrite.java.tree.J;
 
 /**
  * Java-language source-file graph builder. Orchestrated by
@@ -47,8 +49,7 @@ public class JavaSourceFileGraphBuilder implements SourceFileGraphBuilder {
             throws IOException {
         File srcDirectory = new File(repositoryPath);
 
-        JavaParser javaParser = createJavaParser();
-        ExecutionContext ctx = new InMemoryExecutionContext(e -> log.warn("OpenRewrite parse/visit error", e));
+        List<Throwable> diagnostics = Collections.synchronizedList(new ArrayList<>());
 
         final Graph<VertexInfo, DefaultWeightedEdge> classReferencesGraph =
                 new DefaultDirectedWeightedGraph<>(DefaultWeightedEdge.class);
@@ -66,8 +67,9 @@ public class JavaSourceFileGraphBuilder implements SourceFileGraphBuilder {
         MetricsCollectingVisitor metricsVisitor = new MetricsCollectingVisitor(metricsCollector);
 
         try (Stream<Path> pathStream = Files.walk(Path.of(srcDirectory.getAbsolutePath()))) {
-            Stream<Path> filteredStream =
-                    pathStream.filter(file -> file.toString().endsWith(".java"));
+            Stream<Path> filteredStream = pathStream
+                    .filter(file -> file.toString().endsWith(".java"))
+                    .filter(file -> !BazelSourceSets.isGeneratedInput(Path.of(srcDirectory.getAbsolutePath()), file));
             if (config.isExcludeTests()
                     && config.getTestSourceDirectory() != null
                     && !config.getTestSourceDirectory().isEmpty()) {
@@ -77,15 +79,55 @@ public class JavaSourceFileGraphBuilder implements SourceFileGraphBuilder {
             List<Path> list = filteredStream.collect(Collectors.toList());
             log.info("JavaSourceFileGraphBuilder: walking {} Java files under {}", list.size(), repositoryPath);
 
-            Path sourceRoot = Path.of(srcDirectory.getAbsolutePath());
-            javaParser.parse(list, sourceRoot, ctx).forEach(cu -> {
-                // Ensure source path is absolute for correct URI generation
-                // Resolve relative source path against source root, not current working directory
-                Path absoluteSourcePath = sourceRoot.resolve(cu.getSourcePath()).normalize();
-                SourceFile cuWithAbsPath = cu.withSourcePath(absoluteSourcePath);
-                javaVisitor.visit(cuWithAbsPath, ctx);
-                metricsVisitor.visit(cuWithAbsPath, ctx);
-            });
+            Path sourceRoot = Path.of(srcDirectory.getAbsolutePath()).normalize();
+            List<BazelSourceSets.SourceSet> sourceSets = BazelSourceSets.load(list, sourceRoot);
+            Set<Path> parsed = new HashSet<>();
+            for (BazelSourceSets.SourceSet sourceSet : sourceSets) {
+                // Independent Bazel source sets require independent javac contexts.
+                // reset() clears the type cache but does not isolate all compiler state.
+                JavaParser javaParser = createJavaParser();
+                javaParser.setClasspath(sourceSet.classpath());
+                ExecutionContext ctx = new InMemoryExecutionContext(diagnostics::add);
+                log.info(
+                        "Parsing source set {}: {} Java files, {} compile dependencies",
+                        sourceSet.name(),
+                        sourceSet.sources().size(),
+                        sourceSet.classpath().size());
+                javaParser.parse(sourceSet.sources(), sourceRoot, ctx).forEach(cu -> {
+                    Path absoluteSourcePath =
+                            sourceRoot.resolve(cu.getSourcePath()).normalize();
+                    if (!(cu instanceof J.CompilationUnit)) {
+                        return;
+                    }
+                    SourceFile cuWithAbsPath = cu.withSourcePath(absoluteSourcePath);
+                    try {
+                        javaVisitor.visit(cuWithAbsPath, ctx);
+                        metricsVisitor.visit(cuWithAbsPath, ctx);
+                        parsed.add(absoluteSourcePath);
+                    } catch (RuntimeException error) {
+                        diagnostics.add(error);
+                        log.error("Java analysis failed for {}: {}", absoluteSourcePath, error.toString());
+                    }
+                });
+            }
+            List<String> failed = list.stream()
+                    .filter(file -> !parsed.contains(file.normalize()))
+                    .map(Path::toString)
+                    .collect(Collectors.toList());
+            BazelSourceSets.writeParseResult(list.size(), parsed.size(), failed, diagnostics);
+            log.info(
+                    "Parsed {}/{} Java sources across {} source sets; {} diagnostics",
+                    parsed.size(),
+                    list.size(),
+                    sourceSets.size(),
+                    diagnostics.size());
+            if (!failed.isEmpty() || !diagnostics.isEmpty()) {
+                String firstError = diagnostics.isEmpty() ? "" : "; first error: " + diagnostics.get(0);
+                throw new IllegalArgumentException("Java analysis failed: " + failed.size()
+                        + " unparsed source(s); examples: " + failed.subList(0, Math.min(5, failed.size())) + "; "
+                        + diagnostics.size()
+                        + " diagnostic(s)" + firstError);
+            }
         }
 
         Map<String, String> classToSourceFilePathMapping = javaVisitor.getClassToSourceFilePathMapping();

@@ -1,0 +1,13 @@
+module(
+    name = "refactor_first_examples",
+    version = "1.0.0",
+)
+
+bazel_dep(name = "rules_java", version = "7.6.1")
+
+# Load our local plugin module
+bazel_dep(name = "refactor_first_bazel_plugin")
+local_path_override(
+    module_name = "refactor_first_bazel_plugin",
+    path = "..",
+)

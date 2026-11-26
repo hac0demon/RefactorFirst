@@ -1,0 +1,11 @@
+workspace(name = "refactor_first_examples")
+
+local_repository(
+    name = "refactor_first_bazel_plugin",
+    path = "..",
+)
+
+load("@refactor_first_bazel_plugin//refactor-first-bazel-plugin:defs.bzl", "refactor_first_dependencies")
+
+# Download the RefactorFirst CLI jar from Maven Central
+refactor_first_dependencies(version = "0.9.0")

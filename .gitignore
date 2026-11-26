@@ -216,3 +216,7 @@ buildNumber.properties
 
 /jreleaser-cli.jar
 report/e2e/node_modules/
+
+# Bazel analysis inputs, reports, and history cache
+.refactorfirst/
+__pycache__/

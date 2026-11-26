@@ -1,0 +1,8 @@
+module(
+    name = "refactor_first_bazel_plugin",
+    version = "0.9.0",
+    compatibility_level = 1,
+)
+
+# Expose rules_java dependency if needed
+bazel_dep(name = "rules_java", version = "7.6.1")

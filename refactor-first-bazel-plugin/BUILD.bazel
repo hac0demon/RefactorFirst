@@ -1,0 +1,7 @@
+# RefactorFirst Bazel Plugin package
+
+exports_files([
+    "bazel_inputs.py",
+    "rules.bzl",
+    "defs.bzl",
+])
